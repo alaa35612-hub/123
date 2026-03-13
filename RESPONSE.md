@@ -417,3 +417,11 @@ Implemented pipeline:
 ## IX. Auto Scan All Symbols
 
 تم تحديث النظام بحيث يفحص جميع عملات Binance USDT-M تلقائياً (SCAN_MODE=all) مع ترتيب العملات المرشحة للارتفاع حسب Bullish Score وPPS في كل دورة فحص.
+
+
+## X. Runtime Visibility & Non-Blocking Progress
+
+تم تحسين سلوك التشغيل بحيث لا يبدو السكربت "متجمداً":
+- طباعة فورية مع `flush=True` عبر دالة `log`.
+- رسائل مراحل واضحة (تحميل universe، التقدم أثناء المعالجة، أخطاء أولية لكل رمز).
+- إضافة مهلة اتصال للمنصة `EXCHANGE_TIMEOUT_MS` لتقليل التعليق الصامت في الاتصالات البطيئة.

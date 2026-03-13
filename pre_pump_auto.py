@@ -26,7 +26,6 @@ Optional environment variables
 
 from __future__ import annotations
 
-import math
 import os
 import random
 import time
@@ -53,6 +52,8 @@ INTERVAL_SECONDS = int(os.getenv("INTERVAL_SECONDS", "45"))
 MAX_SYMBOLS_PER_CYCLE = int(os.getenv("MAX_SYMBOLS_PER_CYCLE", "120"))
 TOP_RESULTS = int(os.getenv("TOP_RESULTS", "25"))
 DATA_MODE = os.getenv("DATA_MODE", "auto").lower()  # auto | live | synthetic
+EXCHANGE_TIMEOUT_MS = int(os.getenv("EXCHANGE_TIMEOUT_MS", "15000"))
+SYMBOL_PROGRESS_EVERY = int(os.getenv("SYMBOL_PROGRESS_EVERY", "10"))
 
 
 @dataclass(frozen=True)
@@ -118,6 +119,10 @@ class DetectionResult:
     decision_tree_state: str
     pump_type: str
     bullish_score: float
+
+
+def log(msg: str) -> None:
+    print(msg, flush=True)
 
 
 # -------------------------------
@@ -336,7 +341,7 @@ def evaluate_symbol(symbol: str, bars: Sequence[MarketBar], cfg: EngineConfig) -
 def create_exchange():
     if ccxt is None:
         raise RuntimeError("ccxt is not installed")
-    return ccxt.binanceusdm({"enableRateLimit": True, "options": {"defaultType": "future"}})
+    return ccxt.binanceusdm({"enableRateLimit": True, "timeout": EXCHANGE_TIMEOUT_MS, "options": {"defaultType": "future"}})
 
 
 def fetch_all_usdtm_symbols(exchange) -> List[str]:
@@ -534,9 +539,9 @@ def _select_universe(exchange, mode: str) -> List[str]:
 # Main loop
 # -------------------------------
 def main() -> None:
-    print("[BOOT] running self-test...")
+    log("[BOOT] running self-test...")
     run_self_test()
-    print("[BOOT] self-test passed.")
+    log("[BOOT] self-test passed.")
 
     use_live = (DATA_MODE in {"auto", "live"}) and ccxt is not None
     exchange = None
@@ -544,26 +549,28 @@ def main() -> None:
     if use_live:
         try:
             exchange = create_exchange()
-            print("[BOOT] live mode enabled (Binance USDT-M).")
+            log("[BOOT] live mode enabled (Binance USDT-M).")
         except Exception as exc:
             if DATA_MODE == "live":
                 raise
-            print(f"[WARN] could not initialize live mode: {exc}")
-            print("[WARN] fallback to synthetic mode.")
+            log(f"[WARN] could not initialize live mode: {exc}")
+            log("[WARN] fallback to synthetic mode.")
             use_live = False
     else:
-        print("[BOOT] synthetic mode enabled.")
+        log("[BOOT] synthetic mode enabled.")
 
     cfg = EngineConfig()
 
     while True:
         start_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
-        print(f"\n[SCAN] {start_ts} UTC")
+        log(f"\n[SCAN] {start_ts} UTC")
 
         if use_live:
+            log(f"[STEP] loading symbol universe (mode={SCAN_MODE}) ...")
             universe = _select_universe(exchange, SCAN_MODE)
+            log(f"[STEP] universe loaded: {len(universe)} symbols")
             if not universe:
-                print("[WARN] empty universe from exchange; sleeping...")
+                log("[WARN] empty universe from exchange; sleeping...")
                 time.sleep(INTERVAL_SECONDS)
                 continue
         else:
@@ -575,32 +582,36 @@ def main() -> None:
         results: List[DetectionResult] = []
         errors = 0
 
-        for symbol in universe:
+        for i, symbol in enumerate(universe, start=1):
+            if i == 1 or i % max(1, SYMBOL_PROGRESS_EVERY) == 0:
+                log(f"[PROGRESS] processing {i}/{len(universe)}: {symbol}")
             try:
                 bars = build_market_bars_live(exchange, symbol) if use_live else build_market_bars_synthetic(symbol, n=LIMIT)
                 if len(bars) < max(20, cfg.oi_delta_window_bars + 2):
                     continue
                 results.append(evaluate_symbol(symbol, bars, cfg))
-            except Exception:
+            except Exception as exc:
                 errors += 1
+                if errors <= 5:
+                    log(f"[ERROR] {symbol}: {exc}")
 
         if not results:
-            print("[WARN] no valid results this cycle.")
+            log("[WARN] no valid results this cycle.")
             time.sleep(INTERVAL_SECONDS)
             continue
 
         # Rank symbols likely to rise (bullish pre-pump candidates)
         ranked = sorted(results, key=lambda r: r.bullish_score, reverse=True)
 
-        print(f"[INFO] scanned={len(results)} symbols, errors={errors}, showing top={min(TOP_RESULTS, len(ranked))}")
-        print("-" * 175)
+        log(f"[INFO] scanned={len(results)} symbols, errors={errors}, showing top={min(TOP_RESULTS, len(ranked))}")
+        log("-" * 175)
         for r in ranked[:TOP_RESULTS]:
-            print(_row(r))
-        print("-" * 175)
+            log(_row(r))
+        log("-" * 175)
 
         high_conf = [r for r in ranked if r.regime == "HIGH_PROBABILITY_PUMP"]
         watch = [r for r in ranked if r.regime == "WATCHLIST"]
-        print(f"[SUMMARY] high_conf={len(high_conf)} watchlist={len(watch)} no_signal={len(ranked)-len(high_conf)-len(watch)}")
+        log(f"[SUMMARY] high_conf={len(high_conf)} watchlist={len(watch)} no_signal={len(ranked)-len(high_conf)-len(watch)}")
 
         time.sleep(INTERVAL_SECONDS)
 
@@ -609,7 +620,7 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\nStopped by user.")
+        log("\nStopped by user.")
     except Exception:
-        print(traceback.format_exc())
+        log(traceback.format_exc())
         raise
