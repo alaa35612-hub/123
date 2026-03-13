@@ -412,3 +412,8 @@ Implemented pipeline:
 6. Automatic startup flow: Self-Test then live scan loop.
 
 تم دمج المنطق البرمجي في ملف واحد بحيث يعمل تلقائياً عند التشغيل.
+
+
+## IX. Auto Scan All Symbols
+
+تم تحديث النظام بحيث يفحص جميع عملات Binance USDT-M تلقائياً (SCAN_MODE=all) مع ترتيب العملات المرشحة للارتفاع حسب Bullish Score وPPS في كل دورة فحص.
